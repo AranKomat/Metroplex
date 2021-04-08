@@ -1,0 +1,13 @@
+{
+    "custom_width_str": "256:128,128:256,64:512,32:512,16:512,8:512,4:512,1:512",
+    "width": 128,
+    "dec_blocks": "1x2,4m1,4x1,8m4,8x1,16m8,16x1,32m16,32x1,64m32,64x1,128m64,128x1,256m128,256x1",
+    "enc_blocks": "256x1,256d2,128x1,128d2,64x1,64d2,32x1,32d2,16x1,16d2,8x1,8d2,4x1,4d4,1x2",     
+    "dataset": "lsun/church_outdoor",
+    "name": "vdvae1",
+    "image_size": 256,
+    "ema_rate": 0.999,
+    "restore_path": "./saved_models/test/latest",
+    "restore_iter": 0,
+    "entity": "eleutherai"
+}
