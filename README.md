@@ -3,6 +3,7 @@
 
 <p align="center">
   <img alt="Samples" src="./figs/samples.png" width="70%">
+ 
  Ground truth (top), VQ-VAE (middle), DC-VAE (bottom)
 </p>
 
