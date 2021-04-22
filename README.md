@@ -2,7 +2,8 @@
 # Metroplex (WIP)
 
 <p align="center">
-  <img alt="VQ-VAE sample" src="./figs/vqvae-10000-iters.png" width="80%">
+  <img alt="Samples" src="./figs/samples.png" width="70%">
+ Ground truth (top), VQ-VAE (middle), DC-VAE (bottom)
 </p>
 
 Metroplex is a minimalistic JAX/Flax-based VAE codebase. A user can customize a model by switching as: 
@@ -41,7 +42,6 @@ We believe the adjusting the params properly is not easy for the user at this mo
 - [x] Test core components of Metroplex 
 - [ ] Add the option for sampling with Transformer and collecting the latents 
 - [ ] Perform large-scale training
-- [ ] Test discriminator
 - [ ] Add WIT as tfds for training our first DALLE-like model
 - [ ] Add OWIT as tfds for training our final DALLE-like model
 - [ ] Add evaluation metrics (e.g. Precision & Recall, FID, etc) 

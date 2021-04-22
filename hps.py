@@ -24,8 +24,8 @@ class Hyperparams:
     wd: float = 0.
     grad_clip: float = 200.
     skip_threshold: float = 400. # vdvae only        
-    dtype: str = "float32"
-    checkpoint: bool = True # gradient checkpointing
+    dtype: str = "float32" # setting this to bfloat16 affects the performance :(
+    checkpoint: bool = False # gradient checkpointing
         
     # training misc.
     iters_per_ckpt: int = 25000
@@ -33,15 +33,24 @@ class Hyperparams:
     iters_per_print: int = 1000
     iters_per_save: int = 10000
         
-    # architecture
+    # architecture -------------------------
+    
+    # for all settings
     width: int = 512 # width of the highest-res layer (should match with H.dec/enc_blocks below)
-    zdim: int = 16 
+    custom_width_str: str = ''
+    vq_res: int = 32
+    codebook_size: int = None
+    uncond_sample: bool = False
+
+    # for vq/vdvae only
     pre_layer: bool = False
-    norm_type: str = "none"
+    block_type: str = "bottleneck"
+    attn_res: str = ''
+    bottleneck_multiple: float = 0.25
+    zdim: int = 16 
     no_bias_above: int = 64
     enc_blocks: str = None
     dec_blocks: str = None
-    dis_blocks: str = None
     '''
     Example:
     
@@ -51,20 +60,22 @@ class Hyperparams:
     
     VQVAE (d = up (decoder) or down (encoder)) 
     "dec_blocks": "32x1,32d2,64x1,64d2,128x1,128d2,256x2",
-    "enc_blocks": "256x1,256d2,128x1,128d2,64x1,64d2,32x2",
+    "enc_blocks": "256x1,256d2,128x1,128d2,64x1,64d2,32x2",   
     
+    Caveats: DCVAE doesn't use these hparams.
     '''
-    custom_width_str: str = ''
-    attn_res: str = ''
-    bottleneck_multiple: float = 0.25
-    vq_res: int = 32
-    codebook_size: int = None
-    uncond_sample: bool = False
+    
+    # for dcvae only
     gan: bool = False
-    gan_coeff: float = 1.
-    contra_coeff: float = 1.
-    block_type: str = "bottleneck"
-        
+    gamma: float = 0
+    contra_resos: str = ''
+    gan_resos: str = ''
+    loss_type: str = 'NS'
+    patch_nce: bool = False
+    blocks_per_res: int = 1
+    
+    # -------------------------------------
+    
     # visualization
     num_images_visualize: int = 6
     num_variables_visualize: int = 6
@@ -93,7 +104,8 @@ class Hyperparams:
     project: str = 'vae'
     entity: str = None
     name: str = None
-
+    early_evals: int = 0
+    
     # save & restore
     save_dir: str = './saved_models'
     restore_path: str = None

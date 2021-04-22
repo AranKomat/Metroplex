@@ -9,22 +9,19 @@ from jax import tree_map, tree_multimap, device_get
 from jax import grad, lax, pmap
 from jax import random
 import jax.numpy as jnp
-from vae_helpers import grad_G_flipping, sample
+from vae_helpers import sample
 from utils import model_fn
-from vqvae import Discriminator
 from vae_helpers import astype
 import input_pipeline
 from flax import jax_utils
+from gan import training_step as gan_training_step
 
 def training_step(H, data, optimizer, ema, state, rng):
+    # this is for vq/vdvae only
+    
     def loss_fun(params, state):
         (stats, contra), state = model_fn(H).apply({'params': params, **state}, astype(data, H), rng=rng, is_training=True, mutable=list(state.keys()))
         loss = stats['loss']
-        if H.gan:
-            contra_loss = Discriminator(H).contra_loss(contra).astype(jnp.float32)
-            stats.update(contra_loss=contra_loss)
-            loss -= contra_loss * H.contra_coeff
-        stats['loss'] = loss
         stats = {k: v.astype(jnp.float32) for k, v in stats.items()}
         return loss, (stats, state)
 
@@ -46,8 +43,6 @@ def training_step(H, data, optimizer, ema, state, rng):
         return optimizer.replace(
             state=optimizer.state.replace(step=optimizer.state.step + 1)), ema
     def update(gradval):
-        if H.gan:
-            gradval = grad_G_flipping(gradval)
         optimizer_ = optimizer.apply_gradient(
             gradval, learning_rate=learning_rate)
         e_decay = H.ema_rate
@@ -73,24 +68,28 @@ p_training_step = pmap(training_step, 'batch', static_broadcasted_argnums=0)
     
 def train_loop(H, optimizer, ema, state, logprint):
     rng = random.PRNGKey(H.seed_train)
-    iterate = int(optimizer.state.step[0])    
+    if H.gan:
+        iterate = int(optimizer['G'].state.step[0])    
+    else:
+        iterate = int(optimizer.state.step[0])    
     ds_train = input_pipeline.get_ds(H, mode='train')
     ds_valid = input_pipeline.get_ds(H, mode='test')
     early_evals = set([1] + [2 ** exp for exp in range(3, 14)])
     stats = []
     iters_since_starting = 0
+    training_step = p_training_step if not H.gan else gan_training_step
     for data in input_pipeline.prefetch(ds_train, n_prefetch=2): # why 2?
         rng, iter_rng = random.split(rng)
         iter_rng = random.split(iter_rng, H.device_count)   
         t0 = time.time()
-        optimizer, ema, state, training_stats = p_training_step(
+        optimizer, ema, state, training_stats = training_step(
             H, data['image'], optimizer, ema, state, iter_rng)
         training_stats = device_get(
             tree_map(lambda x: x[0], training_stats))
         training_stats['iter_time'] = time.time() - t0
         stats.append(training_stats)
         if (iterate % H.iters_per_print == 0
-                or (iters_since_starting in early_evals)):
+                or (iters_since_starting in early_evals) or (iters_since_starting < H.early_evals)):
             logprint(model=H.desc, type='train_loss',
                       lr=H.lr * float(
                           linear_warmup(H.warmup_iters)(iterate)),
@@ -105,13 +104,12 @@ def train_loop(H, optimizer, ema, state, logprint):
         iterate += 1
         iters_since_starting += 1
         if iterate % H.iters_per_save == 0:
-            if np.isfinite(stats[-1]['loss']):
-                logprint(model=H.desc, type='train_loss',
-                          step=iterate,
-                          **accumulate_stats(stats, H.iters_per_print))
-                fp = os.path.join(H.save_dir, 'latest')
-                logprint(f'Saving model@ {iterate} to {fp}')
-                save_model(fp, optimizer, ema, state, H)
+            logprint(model=H.desc, type='train_loss',
+                      step=iterate,
+                      **accumulate_stats(stats, H.iters_per_print))
+            fp = os.path.join(H.save_dir, 'latest')
+            logprint(f'Saving model@ {iterate} to {fp}')
+            save_model(fp, optimizer, ema, state, H)
 
         if iterate % H.iters_per_ckpt == 0:
             save_model(os.path.join(H.save_dir, f'iter-{iterate}'),

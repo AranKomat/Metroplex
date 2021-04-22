@@ -4,6 +4,7 @@ import time
 from vae import VDVAE
 from vqvae import VQVAE
 import os
+from gan_helpers import Generator
 
 def logger(log_prefix):
     'Prints the arguments out to stdout, .txt, and .jsonl files'
@@ -66,7 +67,9 @@ def tile_images(images, d1=4, d2=4, border=1):
     return out
 
 def model_fn(H):
-    if H.model == 'vqvae':
+    if H.gan:
+        return Generator(H)
+    elif H.model == 'vqvae':
         return VQVAE(H)
     elif H.model == 'vdvae':
         return VDVAE(H)

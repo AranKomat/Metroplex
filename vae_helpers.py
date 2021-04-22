@@ -31,22 +31,6 @@ def recon_loss(px_z, x):
 def sample(px_z):
     return jnp.round((jnp.clip(px_z, -1, 1) + 1) * 127.5).astype(jnp.uint8)
 
-def grad_G_flipping(params):
-    # Unfreeze params to normal dict.
-    params = unfreeze(params)
-    # Get flattened-key: value list.
-    flat_params = {'/'.join(k): v for k, v in flax.traverse_util.flatten_dict(params).items()}
-    keyword = 'discriminator' # don't use this anywhere name other than Discriminator class :(
-
-    new_dict = {}
-    for key, value in flat_params.items():
-        new_dict[key] = -value if keyword not in key else value
-    
-    # Unflatten.
-    unflat_params = flax.traverse_util.unflatten_dict({tuple(k.split('/')): v for k, v in new_dict.items()})
-    # Refreeze.
-    return freeze(unflat_params)
-
 class Attention(nn.Module):
     H: hps.Hyperparams
 
@@ -87,8 +71,7 @@ def get_width_settings(s):
             mapping[k] = int(v)
     return mapping
 
-def normalize(x, H=None, type=None, train=False):
-    type = type or H.norm_type 
+def normalize(x, type=None, train=False):
     if type == 'group':
         return nn.GroupNorm()(x)
     elif type == 'batch':
@@ -125,35 +108,26 @@ class Block(nn.Module):
     use_3x3: bool = True
     last_scale: bool = 1.
     up: bool = False
-    disc: bool = False
 
     @nn.compact
     def __call__(self, x, train=True):
         H = self.H
-        #print('block', x.shape)
         residual = self.residual
         Conv1x1_ = partial(Conv1x1, dtype=H.dtype)
         Conv3x3_ = partial(Conv3x3 if self.use_3x3 else Conv1x1, dtype=H.dtype)
-        norm = partial(normalize, H=H, train=train)
         if H.block_type == 'bottleneck':
-            x_ = Conv1x1_(self.middle_width)(nn.gelu(norm(x)))
-            x_ = Conv3x3_(self.middle_width)(nn.gelu(norm(x_)))
-            x_ = Conv3x3_(self.middle_width)(nn.gelu(norm(x_)))
+            x_ = Conv1x1_(self.middle_width)(nn.gelu(x))
+            x_ = Conv3x3_(self.middle_width)(nn.gelu(x_))
+            x_ = Conv3x3_(self.middle_width)(nn.gelu(x_))
             x_ = Conv1x1_(
                 self.out_width, kernel_init=lecun_normal(self.last_scale))(
-                    nn.gelu(norm(x_)))
+                    nn.gelu(x_))
         elif H.block_type == 'diffusion':
-            if not self.disc:
-                middle_width = int(self.middle_width / H.bottleneck_multiple)
-                x_ = Conv3x3_(middle_width)(nn.gelu(norm(x)))
-                x_ = Conv3x3_(
-                    self.out_width, kernel_init=lecun_normal(self.last_scale))(
-                        nn.gelu(norm(x_)))
-            else:
-                residual = False
-                x_ = Conv3x3_(
-                    self.out_width, kernel_init=lecun_normal(self.last_scale))(x)
-                x_ = nn.gelu(norm(x_, type='batch'))
+            middle_width = int(self.middle_width / H.bottleneck_multiple)
+            x_ = Conv3x3_(middle_width)(nn.gelu(x))
+            x_ = Conv3x3_(
+                self.out_width, kernel_init=lecun_normal(self.last_scale))(
+                    nn.gelu(x_))
                 
         out = x + x_ if residual else x_
         if self.down_rate > 1:
@@ -176,16 +150,13 @@ class EncBlock(nn.Module):
     use_3x3: bool = True
     last_scale: bool = 1.
     up: bool = False
-    disc: bool = False
 
     def setup(self):
         H = self.H
         width, use_3x3 = self.width, self.use_3x3        
         middle_width = int(width * H.bottleneck_multiple)
-        #print(self.res, width, middle_width)
         self.pre_layer = Attention(H) if has_attn(self.res, H) else identity
-        self.block1 = Block(H, middle_width, width, 1, True, use_3x3, disc=self.disc)
-        self.block2 = Block(H, middle_width, width, self.down_rate or 1, True, use_3x3, up=self.up, disc=self.disc)
+        self.block1 = Block(H, middle_width, width, self.down_rate or 1, True, use_3x3, up=self.up)
+        
     def __call__(self, x, train=True):
-        #print('enc', jnp.isnan(x.mean()), jnp.isfinite(x.mean()))
-        return self.block2(self.block1(self.pre_layer(x), train=train), train=train)
+        return self.block1(self.pre_layer(x), train=train)

@@ -26,18 +26,19 @@ from vae_helpers import astype, sample
 import input_pipeline
 from einops import rearrange
 map = safe_map
-
+from gan_helpers import Discriminator
 
 
 def save_model(path, optimizer, ema, state, H):
     optimizer = jax_utils.unreplicate(optimizer)
-    checkpoints.save_checkpoint(path, optimizer, optimizer.state.step)
+    step = optimizer.state.step if not H.gan else optimizer['G'].state.step  
+    checkpoints.save_checkpoint(path, optimizer, step)
     if ema:
         ema = jax_utils.unreplicate(ema)
-        checkpoints.save_checkpoint(path + '_ema', ema, optimizer.state.step)
+        checkpoints.save_checkpoint(path + '_ema', ema, step)
     if state:
         state = jax_utils.unreplicate(state)
-        checkpoints.save_checkpoint(path + '_state', state, optimizer.state.step)
+        checkpoints.save_checkpoint(path + '_state', state, step)
     from_log = os.path.join(H.save_dir, 'log.jsonl')
     to_log = f'{os.path.dirname(path)}/{os.path.basename(path)}-log.jsonl'
     subprocess.check_output(['cp', from_log, to_log])
@@ -55,6 +56,17 @@ def load_vaes(H, logprint):
     ema = params if H.ema_rate != 0 else {}
     optimizer = Adam(weight_decay=H.wd, beta1=H.adam_beta1,
                      beta2=H.adam_beta2).create(params)
+    if H.gan:
+        variables_d = Discriminator(H).init({'params': init_rng}, init_batch, rng=init_eval_rng)
+        state_d, params_d = variables_d.pop('params')
+        #print(jax.tree_map(jnp.shape, state))
+        del variables_d
+        optimizer_d = Adam(weight_decay=H.wd, beta1=H.adam_beta1,
+                         beta2=H.adam_beta2).create(params_d)
+        optimizer = dict(G=optimizer, D=optimizer_d)
+        state = dict(G=state, D=state_d)
+        ema = dict(params=ema, state=state['G']) if H.ema_rate != 0 else {}
+    
     if H.restore_path and H.restore_iter > 0:
         logprint(f'Restoring vae from {H.restore_path}')
         optimizer = checkpoints.restore_checkpoint(H.restore_path, optimizer, step=H.restore_iter)
@@ -62,11 +74,11 @@ def load_vaes(H, logprint):
             ema = checkpoints.restore_checkpoint(H.restore_path + '_ema', ema, step=H.restore_iter)
         if state:
             state = checkpoints.restore_checkpoint(H.restore_path + '_state', state, step=H.restore_iter)
-
-    total_params = 0
-    for p in jax.tree_flatten(optimizer.target)[0]:
-        total_params += np.prod(p.shape)
-    logprint(total_params=total_params, readable=f'{total_params:,}')
+    if not H.gan:
+        total_params = 0
+        for p in jax.tree_flatten(optimizer.target)[0]:
+            total_params += np.prod(p.shape)
+        logprint(total_params=total_params, readable=f'{total_params:,}')
     optimizer = jax_utils.replicate(optimizer)
     if ema:
         ema = jax_utils.replicate(ema)        
@@ -177,7 +189,15 @@ def get_latents_loop(H, optimizer, ema, state, logprint, mode):
 
 def write_images(H, optimizer, ema, state, viz_batch):
     rng = random.PRNGKey(H.seed_sample)
-    params = ema or optimizer.target
+    if H.gan:
+        if ema:
+            params = ema['params']
+            state = ema['state']
+        else:
+            params = optimizer['G'].target
+            state = state['G']
+    else:
+        params = ema or optimizer.target
     ema_apply = partial(model_fn(H).apply,
                         {'params': params, **state}) 
     forward_get_latents = partial(ema_apply, method=model_fn(H).forward_get_latents)

@@ -13,7 +13,6 @@ from einops import repeat, rearrange
 from vae_helpers import (Conv1x1, Conv3x3, gaussian_sample, resize, parse_layer_string, pad_channels, get_width_settings,
                          gaussian_kl, Attention, recon_loss, sample, normalize, checkpoint, lecun_normal, has_attn, Block, EncBlock, identity)
 import hps
-from vqvae import Discriminator
 map = safe_map
 
 class Encoder(nn.Module):
@@ -176,7 +175,6 @@ class VDVAE(nn.Module):
     def setup(self):
         self.encoder = Encoder(self.H)
         self.decoder = Decoder(self.H)
-        self.discriminator = Discriminator(self.H)
 
     def __call__(self, x, rng=None, **kwargs):
         x_target = jnp.array(x) # is this clone?
@@ -184,15 +182,9 @@ class VDVAE(nn.Module):
         px_z, stats = self.decoder(self.encoder(x), rng)
         ndims = np.prod(x.shape[1:])
         kl = sum((s['kl']/ ndims).sum((1, 2, 3)).mean() for s in stats)
-        if not self.H.gan:
-            loss = recon_loss(px_z, x_target)
-            return dict(loss=loss + kl, recon_loss=loss, kl=kl), None
-        else:
-            uncond_sample = self.forward_uncond_samples(x_target.shape[0], uncond_rng) if self.H.uncond_sample else None
-            gan_loss, contra = self.discriminator(x_target, px_z, uncond_sample) 
-            loss = -kl + self.H.gan_coeff * gan_loss
-            return dict(loss=loss, gan_loss=gan_loss, kl=kl), contra
-
+        loss = recon_loss(px_z, x_target)
+        return dict(loss=loss + kl, recon_loss=loss, kl=kl), None
+        
     def forward_get_latents(self, x, rng):
         return self.decoder(self.encoder(x), rng, get_latents=True)[-1]
 
